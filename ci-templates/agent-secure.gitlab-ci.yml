@@ -22,7 +22,11 @@
   image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
   stage: test
   variables:
-    ENGINE_VERSION: "v0.1.1"
+    ENGINE_VERSION: "v0.1.2"
+    # SHA-256 of agent-secure-linux-amd64 for ENGINE_VERSION; the job verifies
+    # the downloaded binary against the release checksums.txt, and you can pin
+    # the digest here for defense in depth:
+    # ENGINE_SHA256: "977bf6ea754b3a83619bdacc29164ad84b674d7ab9c41fc4d61e3fe6ed206071"
     GITLEAKS_VERSION: "8.30.1"
     OSV_SCANNER_VERSION: "2.5.1"
     ALLOW_JSON: "[]"
