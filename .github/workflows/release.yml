@@ -76,7 +76,11 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x dist/agent-secure-linux-amd64
-          ./dist/agent-secure-linux-amd64 2>&1 | grep -q "usage: agent-secure" || {
+          # The engine exits 2 on the no-args usage path; the smoke test only
+          # asserts the message, so the expected exit code must not poison a
+          # pipefail pipeline here.
+          out="$(./dist/agent-secure-linux-amd64 2>&1 || true)"
+          echo "${out}" | grep -q "usage: agent-secure" || {
             echo "binary does not print usage"; exit 1; }
 
       - name: Generate checksums
