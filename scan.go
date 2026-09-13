@@ -71,6 +71,13 @@ func validatePolicy(p Policy) error {
 		if (name != "gitleaks" && name != "osv-scanner") || seen[name] {
 			return errors.New("unknown or duplicate scanner")
 		}
+		tool, ok := p.Tools[name]
+		if !ok {
+			return errors.New("policy does not pin a scanner binary for " + name)
+		}
+		if !filepath.IsAbs(tool.Path) || !digestPattern.MatchString(tool.SHA256) {
+			return errors.New("scanner " + name + " needs an absolute path and pinned SHA-256")
+		}
 		seen[name] = true
 	}
 	return nil

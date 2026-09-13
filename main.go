@@ -133,8 +133,17 @@ func execute(args []string, out, stderr io.Writer) int {
 			}
 			report.Checks = append(report.Checks, check)
 		}
+		// Exit 0 only when every pinned scanner verified; CI gates on this.
+		// "not_verified" (the sandbox check) is informational, not an error.
+		doctorExit := 0
+		for _, c := range report.Checks {
+			if c.Status == "error" {
+				doctorExit = 2
+				break
+			}
+		}
 		_ = json.NewEncoder(out).Encode(report)
-		return 2
+		return doctorExit
 	}
 	source, cleanup, err := snapshot(absolute)
 	if err != nil {

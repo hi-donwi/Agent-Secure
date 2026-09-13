@@ -10,7 +10,7 @@ output without ever echoing secret values.
 
 ```sh
 agent-secure version
-agent-secure doctor --root <repo> --policy <policy.json>   # verify scanners, no scan; exits 2 on any error
+agent-secure doctor --root <repo> --policy <policy.json>   # verify scanners, no scan; 0 = verified, 2 = error
 agent-secure scan   --root <repo> --policy <policy.json>   # snapshot + scan; JSON report on stdout
 ```
 
@@ -20,7 +20,9 @@ The policy is written by the operator, **not** by the scanned repository. The
 snapshot stage deliberately excludes `.gitleaks.toml`, `.gitleaksignore`, and
 `osv-scanner.toml` so an untrusted checkout cannot weaken its own gate, and it
 refuses to scan through symlinks. Tools are pinned by absolute path and
-SHA-256; a mismatched digest aborts the scan as `incomplete`.```json
+SHA-256; a mismatched digest aborts the scan as `incomplete`.
+
+```json
 {
   "version": 1,
   "allow_network": false,
@@ -33,13 +35,31 @@ SHA-256; a mismatched digest aborts the scan as `incomplete`.```json
 ```
 
 `policies/example.json` is a starting template: copy it to a **private,
-access-controlled** location, replace the placeholder digests with the SHA-256
-of the exact binaries you ship (`shasum -a 256 <binary>`), and treat the file
-as operator-owned configuration. Unknown fields are rejected, so keep it
-exactly to the schema.
+access-controlled** location and treat it as operator-owned configuration.
+Unknown fields are rejected, so keep it exactly to the schema.
 
-`allow_network: false` runs OSV-Scanner with `--offline-vulnerabilities` from a
-pre-fetched local database; set it to `true` only for approved data.
+Generate a policy with real paths and digests for the locally installed
+scanners instead of computing them by hand:
+
+```sh
+scripts/bootstrap-policy.sh > /secure/location/policy.json   # operator-owned
+agent-secure doctor --root <repo> --policy /secure/location/policy.json
+```
+
+Regenerate after every scanner upgrade — a stale digest is reported by
+`doctor` as an error, never silently ignored.
+
+`allow_network: false` runs OSV-Scanner with `--offline-vulnerabilities` from
+a pre-fetched local database. Seed the cache once per machine/runner (the
+download needs a scan target that has at least one lockfile):
+
+```sh
+osv-scanner scan source --offline-vulnerabilities --download-offline-databases \
+  --format json -r <repo-with-lockfiles>
+```
+
+Set `allow_network: true` only for approved data; scanners otherwise run
+without network access.
 
 ## Report contract
 
@@ -62,6 +82,30 @@ shasum -a 256 /path/to/gitleaks   # pin this digest in the policy
 `gitleaks dir <root> --no-banner --redact --report-format json` must exit `1`
 with a JSON array for findings; `osv-scanner scan source --format=json` must
 exit `1` with a results object. Any other non-zero exit is a tool failure.
+
+## Gating CI (reusable workflow)
+
+`.github/workflows/agent-secure-gate.yml` is a `workflow_call` template that
+product repos call after tagging a release. It downloads the engine binary and
+both scanners, digest-verifies everything, generates the policy at runtime
+(living only for the job), and fails the job on any verdict other than `pass`:
+
+```yaml
+jobs:
+  security:
+    uses: hi-donwi/Agent-Secure/.github/workflows/agent-secure-gate.yml@<PINNED_ENGINE_SHA>
+    with:
+      root: .
+      engine_version: v1.0.0
+      engine_sha256: <from the release checksums.txt>
+      gitleaks_version: 8.30.1
+      osv_scanner_version: 2.5.1
+```
+
+Pin the workflow by commit SHA — a mutable `@main` would let the gate itself
+be modified after review. `allow_network` is `true` inside the ephemeral
+runner (OSV advisory lookup only); keep local runs offline per the policy
+default.
 
 ## Development
 
