@@ -99,8 +99,8 @@ jobs:
     uses: hi-donwi/Agent-Secure/.github/workflows/agent-secure-gate.yml@<PINNED_ENGINE_SHA>
     with:
       root: .
-      engine_version: v0.1.2
-      engine_sha256: 977bf6ea754b3a83619bdacc29164ad84b674d7ab9c41fc4d61e3fe6ed206071  # linux/amd64
+      engine_version: v0.1.3
+      engine_sha256: f19b92d17d8c92f0ef8f60a102ead1fe306df23b60cccf42b456a01ecde8202a  # linux/amd64
       gitleaks_version: 8.30.1
       osv_scanner_version: 2.5.1
       allow_json: '[]'  # operator-scoped allow entries; reason and expiry are mandatory
