@@ -96,10 +96,11 @@ jobs:
     uses: hi-donwi/Agent-Secure/.github/workflows/agent-secure-gate.yml@<PINNED_ENGINE_SHA>
     with:
       root: .
-      engine_version: v1.0.0
-      engine_sha256: <from the release checksums.txt>
+      engine_version: v0.1.2
+      engine_sha256: 977bf6ea754b3a83619bdacc29164ad84b674d7ab9c41fc4d61e3fe6ed206071  # linux/amd64
       gitleaks_version: 8.30.1
       osv_scanner_version: 2.5.1
+      allow_json: '[]'  # operator-scoped allow entries; reasons are mandatory
 ```
 
 Pin the workflow by commit SHA — a mutable `@main` would let the gate itself
