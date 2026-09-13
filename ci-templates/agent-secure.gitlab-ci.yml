@@ -1,0 +1,63 @@
+# agent-secure gate for GitLab CI.
+#
+# GitHub cannot be included from GitLab CI, so this template is COPIED into
+# the client repository (or a GitLab template project) rather than included
+# remotely. Keep it in sync with
+# hi-donwi/Agent-Secure/.github/workflows/agent-secure-gate.yml.
+#
+# Usage in the client repo's .gitlab-ci.yml:
+#
+#   include:
+#     - local: 'ci/agent-secure.gitlab-ci.yml'
+#
+# The job downloads the pinned agent-secure release binary and both scanners,
+# digest-verifies everything, generates the policy at runtime, and fails on
+# any verdict other than "pass".
+#
+# allow_json (optional) carries operator-scoped allow entries (scanner, id,
+# file, reason, expires) - reviewable right here in this file. The engine
+# rejects entries without a reason or with a malformed expiry.
+
+.agent-secure:
+  image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+  stage: test
+  variables:
+    ENGINE_VERSION: "v0.1.1"
+    GITLEAKS_VERSION: "8.30.1"
+    OSV_SCANNER_VERSION: "2.5.1"
+    ALLOW_JSON: "[]"
+  before_script:
+    - apk add --no-cache curl tar jq python3
+    - mkdir -p /tmp/as/bin /tmp/as/tools && cd /tmp/as/tools
+    - "curl -fsSL --retry 3 -o /tmp/as/bin/agent-secure https://github.com/hi-donwi/Agent-Secure/releases/download/${ENGINE_VERSION}/agent-secure-linux-amd64"
+    - "curl -fsSL --retry 3 -o checksums.txt https://github.com/hi-donwi/Agent-Secure/releases/download/${ENGINE_VERSION}/checksums.txt"
+    - grep agent-secure-linux-amd64 checksums.txt | sha256sum -c -
+    - "curl -fsSL --retry 3 -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+    - tar -xzf gitleaks.tar.gz gitleaks && rm gitleaks.tar.gz
+    - "curl -fsSL --retry 3 -o osv-scanner https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+    - chmod +x gitleaks osv-scanner /tmp/as/bin/agent-secure
+    # Pin the scanners by digest, computed from the downloaded bytes.
+    - |
+      jq -n \
+        --arg gp "/tmp/as/tools/gitleaks" \
+        --arg gd "$(sha256sum gitleaks | cut -d' ' -f1)" \
+        --arg op "/tmp/as/tools/osv-scanner" \
+        --arg od "$(sha256sum osv-scanner | cut -d' ' -f1)" \
+        --argjson allow "${ALLOW_JSON}" \
+        '{version: 1, allow_network: true, scanners: ["gitleaks", "osv-scanner"],
+          tools: {gitleaks: {path: $gp, sha256: $gd},
+                  "osv-scanner": {path: $op, sha256: $od}},
+          allow: $allow}' > /tmp/as/policy.json
+  script:
+    - cd "$CI_PROJECT_DIR"
+    - /tmp/as/bin/agent-secure doctor --root . --policy /tmp/as/policy.json > /tmp/as/doctor.json
+    - |
+      rc=0
+      /tmp/as/bin/agent-secure scan --root . --policy /tmp/as/policy.json > /tmp/as/report.json || rc=$?
+    - |
+      if [ "${rc}" -eq 2 ]; then
+        echo "agent-secure could not complete the scan (status incomplete)"
+        exit 1
+      fi
+    - "python3 -c 'import json; d=json.load(open(\"/tmp/as/report.json\")); print(\"agent-secure verdict:\", d.get(\"status\", \"incomplete\")); [print(\"finding:\", f.get(\"scanner\",\"\"), f.get(\"id\",\"\"), f.get(\"file\",\"\"), f.get(\"line\",\"\")) for f in d.get(\"findings\", [])]'"
+    - "test \"$(python3 -c 'import json; print(json.load(open(\"/tmp/as/report.json\")).get(\"status\"))')\" = pass"
