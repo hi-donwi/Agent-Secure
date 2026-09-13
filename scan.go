@@ -25,6 +25,23 @@ type Policy struct {
 	AllowNetwork bool            `json:"allow_network"`
 	Scanners     []string        `json:"scanners"`
 	Tools        map[string]Tool `json:"tools"`
+	Allow        []Allow         `json:"allow,omitempty"`
+}
+
+// Allow suppresses one finding class, decided by the policy owner — never by
+// the scanned repository. A reason is mandatory so the policy stays auditable,
+// and Expires (YYYY-MM-DD, inclusive) makes allowlists rot on purpose.
+type Allow struct {
+	Scanner string `json:"scanner"`
+	ID      string `json:"id"`
+	File    string `json:"file,omitempty"`
+	Reason  string `json:"reason"`
+	Expires string `json:"expires,omitempty"`
+}
+
+type AllowedFinding struct {
+	Finding Finding `json:"finding"`
+	Reason  string  `json:"reason"`
 }
 type Finding struct {
 	ID       string `json:"id"`
@@ -40,14 +57,15 @@ type Check struct {
 	ToolSHA256 string `json:"tool_sha256,omitempty"`
 }
 type Report struct {
-	Version      int       `json:"version"`
-	Root         string    `json:"root"`
-	PolicySHA256 string    `json:"policy_sha256"`
-	Created      string    `json:"created"`
-	Status       string    `json:"status"`
-	Coverage     string    `json:"coverage"`
-	Checks       []Check   `json:"checks"`
-	Findings     []Finding `json:"findings"`
+	Version      int              `json:"version"`
+	Root         string           `json:"root"`
+	PolicySHA256 string           `json:"policy_sha256"`
+	Created      string           `json:"created"`
+	Status       string           `json:"status"`
+	Coverage     string           `json:"coverage"`
+	Checks       []Check          `json:"checks"`
+	Findings     []Finding        `json:"findings"`
+	Allowed      []AllowedFinding `json:"allowed,omitempty"`
 }
 
 func (r Report) ExitCode() int {
@@ -80,7 +98,57 @@ func validatePolicy(p Policy) error {
 		}
 		seen[name] = true
 	}
+	for _, a := range p.Allow {
+		if a.Reason == "" {
+			return errors.New("allow entry requires a reason")
+		}
+		if a.Expires != "" {
+			if _, e := time.Parse("2006-01-02", a.Expires); e != nil {
+				return fmt.Errorf("allow expiry %q must be YYYY-MM-DD", a.Expires)
+			}
+		}
+	}
 	return nil
+}
+
+// todayInUTC is split out so the allow expiry test can freeze the clock.
+var todayInUTC = func() string {
+	return time.Now().UTC().Format("2006-01-02")
+}
+
+// filterAllowed drops findings the policy owner explicitly allowed and returns
+// them separately for the report — allowed findings stay visible and auditable
+// in every report, and expired allows stop suppressing silently.
+func filterAllowed(findings []Finding, p Policy) (kept []Finding, allowed []AllowedFinding, err error) {
+	for _, f := range findings {
+		suppressed := false
+		for _, a := range p.Allow {
+			if a.Scanner != f.Scanner || a.ID != f.ID {
+				continue
+			}
+			if a.File != "" && a.File != f.File {
+				continue
+			}
+			if a.Reason == "" {
+				return nil, nil, errors.New("allow entry requires a reason")
+			}
+			if a.Expires != "" {
+				if _, e := time.Parse("2006-01-02", a.Expires); e != nil {
+					return nil, nil, fmt.Errorf("invalid allow expiry %q: must be YYYY-MM-DD", a.Expires)
+				}
+				if todayInUTC() > a.Expires {
+					continue
+				}
+			}
+			suppressed = true
+			allowed = append(allowed, AllowedFinding{Finding: f, Reason: a.Reason})
+			break
+		}
+		if !suppressed {
+			kept = append(kept, f)
+		}
+	}
+	return kept, allowed, nil
 }
 
 func verifyTool(tool Tool) error {
@@ -258,11 +326,22 @@ func scan(ctx context.Context, root string, p Policy, policyDigest string) Repor
 			check.Detail = err.Error()
 			report.Status = "incomplete"
 		} else if len(findings) != 0 {
-			check.Status = "findings"
-			if report.Status != "incomplete" {
-				report.Status = "findings"
+			kept, allowed, ferr := filterAllowed(findings, p)
+			if ferr != nil {
+				check.Status = "error"
+				check.Detail = ferr.Error()
+				report.Status = "incomplete"
+			} else {
+				report.Allowed = append(report.Allowed, allowed...)
+				findings = kept
+				if len(findings) != 0 {
+					check.Status = "findings"
+					if report.Status != "incomplete" {
+						report.Status = "findings"
+					}
+					report.Findings = append(report.Findings, findings...)
+				}
 			}
-			report.Findings = append(report.Findings, findings...)
 		}
 		report.Checks = append(report.Checks, check)
 	}

@@ -84,3 +84,66 @@ func TestCleanOSVReportPasses(t *testing.T) {
 		t.Fatalf("clean report failed: %+v", r)
 	}
 }
+
+func TestPolicyAllowSuppressesAndDiscloses(t *testing.T) {
+	tool := scannerFixture(t, `while [ "$1" != "--report-path" ]; do shift; done
+shift
+printf '%s' '[{"RuleID":"synthetic","File":"fixtures.txt","StartLine":4}]' > "$1"
+exit 1
+`)
+	policy := Policy{Version: 1, Scanners: []string{"gitleaks"},
+		Tools: map[string]Tool{"gitleaks": tool},
+		Allow: []Allow{{Scanner: "gitleaks", ID: "synthetic", File: "fixtures.txt", Reason: "test fixture, not a credential"}}}
+	r := scan(context.Background(), t.TempDir(), policy, "fixture")
+	if r.ExitCode() != 0 || len(r.Findings) != 0 || len(r.Allowed) != 1 || r.Allowed[0].Finding.File != "fixtures.txt" || r.Allowed[0].Reason == "" {
+		t.Fatalf("allow list not applied: %+v", r)
+	}
+	data, _ := json.Marshal(r)
+	if !strings.Contains(string(data), "fixtures.txt") {
+		t.Fatal("allowed finding must stay visible in the report")
+	}
+}
+
+func TestExpiredAllowStopsSuppressing(t *testing.T) {
+	tool := scannerFixture(t, `while [ "$1" != "--report-path" ]; do shift; done
+shift
+printf '%s' '[{"RuleID":"synthetic","File":"a.txt","StartLine":1}]' > "$1"
+exit 1
+`)
+	policy := Policy{Version: 1, Scanners: []string{"gitleaks"},
+		Tools: map[string]Tool{"gitleaks": tool},
+		Allow: []Allow{{Scanner: "gitleaks", ID: "synthetic", Reason: "historical", Expires: "2000-01-01"}}}
+	r := scan(context.Background(), t.TempDir(), policy, "fixture")
+	if r.ExitCode() != 1 || len(r.Findings) != 1 || len(r.Allowed) != 0 {
+		t.Fatalf("expired allow still suppressed: %+v", r)
+	}
+}
+
+func TestAllowWithoutReasonIsInvalid(t *testing.T) {
+	p := Policy{Version: 1, Scanners: []string{"gitleaks"}, Tools: map[string]Tool{},
+		Allow: []Allow{{Scanner: "gitleaks", ID: "x"}}}
+	if err := validatePolicy(p); err == nil {
+		t.Fatal("allow without reason accepted")
+	}
+}
+
+func TestPolicyWithoutPinnedToolIsRejected(t *testing.T) {
+	if err := validatePolicy(Policy{Version: 1, Scanners: []string{"gitleaks"}, Tools: map[string]Tool{}}); err == nil {
+		t.Fatal("scanner without pinned tool accepted")
+	}
+}
+
+func TestFutureAllowExpiresLater(t *testing.T) {
+	tool := scannerFixture(t, `while [ "$1" != "--report-path" ]; do shift; done
+shift
+printf '%s' '[{"RuleID":"synthetic","File":"b.txt","StartLine":2}]' > "$1"
+exit 1
+`)
+	policy := Policy{Version: 1, Scanners: []string{"gitleaks"},
+		Tools: map[string]Tool{"gitleaks": tool},
+		Allow: []Allow{{Scanner: "gitleaks", ID: "synthetic", Reason: "still valid", Expires: "2999-12-31"}}}
+	r := scan(context.Background(), t.TempDir(), policy, "fixture")
+	if r.ExitCode() != 0 || len(r.Allowed) != 1 {
+		t.Fatalf("future-dated allow not applied: %+v", r)
+	}
+}
