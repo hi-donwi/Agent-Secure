@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "allow_network": false,
+  "scanners": [
+    "gitleaks",
+    "osv-scanner"
+  ],
+  "tools": {
+    "gitleaks": {
+      "path": "/usr/local/bin/gitleaks",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "osv-scanner": {
+      "path": "/usr/local/bin/osv-scanner",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+}
