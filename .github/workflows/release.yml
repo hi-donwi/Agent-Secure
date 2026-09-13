@@ -1,0 +1,93 @@
+name: release
+
+# Publishes agent-secure binaries for the OS/arch pairs where the scanner
+# gate is expected to run. Integrity is the whole product here: binaries are
+# static, reproducibility-oriented (-trimpath), and checksummed; consumers
+# pin the SHA-256 in their external policy (see scripts/bootstrap-policy.sh).
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: '1.27'
+
+jobs:
+  verify:
+    name: Verify before releasing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race -count=1 ./...
+
+  build-release:
+    name: Build multi-platform release binaries
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Compile static binaries
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+
+          # -trimpath strips local filesystem paths so the same source and tag
+          # produce the same bytes on any builder.
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            GOOS="${target%/*}"
+            GOARCH="${target#*/}"
+            echo "Building ${GOOS}/${GOARCH}..."
+            GOOS="$GOOS" GOARCH="$GOARCH" CGO_ENABLED=0 \
+              go build -trimpath -ldflags="-s -w" \
+              -o "dist/agent-secure-${GOOS}-${GOARCH}" .
+          done
+
+      - name: Confirm the Linux binaries are static
+        run: |
+          set -euo pipefail
+          for f in dist/agent-secure-linux-*; do
+            file "$f"
+            file "$f" | grep -q "statically linked"
+          done
+
+      - name: Smoke-test the native binary
+        run: |
+          set -euo pipefail
+          chmod +x dist/agent-secure-linux-amd64
+          ./dist/agent-secure-linux-amd64 2>&1 | grep -q "usage: agent-secure" || {
+            echo "binary does not print usage"; exit 1; }
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum agent-secure-* > checksums.txt
+          cat checksums.txt
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: dist/*
+          generate_release_notes: true

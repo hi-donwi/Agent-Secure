@@ -1,0 +1,118 @@
+# Reusable agent-secure gate.
+#
+# Called from product repos as:
+#
+#   jobs:
+#     security:
+#       uses: hi-donwi/Agent-Secure/.github/workflows/agent-secure-gate.yml@<PINNED_ENGINE_SHA>
+#       with:
+#         root: .
+#         engine_version: v1.0.0
+#         engine_sha256: <sha256 of agent-secure-linux-amd64 from that release>
+#         gitleaks_version: 8.30.1
+#         osv_scanner_version: 2.5.1
+#
+# Everything is pinned: the engine code by @sha, the engine binary by the
+# release checksum, and both scanners by version + digest at runtime. The
+# policy is generated inside the job from those digests and lives only for
+# the job's lifetime — there is no policy checkout that could be tampered
+# with, and no scanner configuration comes from the scanned repository.
+#
+# allow_network is true here on purpose: the runner is ephemeral and the only
+# remote endpoint is the OSV advisory API. Interactive/local runs should keep
+# the offline default documented in the README.
+
+name: agent-secure gate
+
+on:
+  workflow_call:
+    inputs:
+      root:
+        description: 'Path (within the caller checkout) to scan'
+        required: false
+        default: '.'
+        type: string
+      engine_version:
+        description: 'agent-secure release tag'
+        required: true
+        type: string
+      engine_sha256:
+        description: 'SHA-256 of agent-secure-linux-amd64 from that release'
+        required: true
+        type: string
+      gitleaks_version:
+        required: true
+        type: string
+      osv_scanner_version:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Download and digest-verify pinned binaries
+        env:
+          ENGINE_VERSION: ${{ inputs.engine_version }}
+          ENGINE_SHA256: ${{ inputs.engine_sha256 }}
+          GITLEAKS_VERSION: ${{ inputs.gitleaks_version }}
+          OSV_SCANNER_VERSION: ${{ inputs.osv_scanner_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/bin" "${RUNNER_TEMP}/tools"
+          cd "${RUNNER_TEMP}/tools"
+
+          curl -fsSL --retry 3 -o "${RUNNER_TEMP}/bin/agent-secure" \
+            "https://github.com/hi-donwi/Agent-Secure/releases/download/${ENGINE_VERSION}/agent-secure-linux-amd64"
+          echo "${ENGINE_SHA256}  ${RUNNER_TEMP}/bin/agent-secure" | sha256sum -c -
+
+          curl -fsSL --retry 3 -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf gitleaks.tar.gz gitleaks
+          rm gitleaks.tar.gz
+
+          curl -fsSL --retry 3 -o osv-scanner \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+
+          chmod +x gitleaks osv-scanner "${RUNNER_TEMP}/bin/agent-secure"
+
+          # Pin the scanners by digest, computed from the downloaded bytes —
+          # the same guarantee the engine itself enforces before every run.
+          jq -n \
+            --arg gp "${RUNNER_TEMP}/tools/gitleaks" \
+            --arg gd "$(sha256sum gitleaks | cut -d' ' -f1)" \
+            --arg op "${RUNNER_TEMP}/tools/osv-scanner" \
+            --arg od "$(sha256sum osv-scanner | cut -d' ' -f1)" \
+            '{version: 1, allow_network: true, scanners: ["gitleaks", "osv-scanner"],
+              tools: {gitleaks: {path: $gp, sha256: $gd},
+                      "osv-scanner": {path: $op, sha256: $od}}}' \
+            > "${RUNNER_TEMP}/policy.json"
+
+      - name: Verify the pinned setup
+        run: |
+          "${RUNNER_TEMP}/bin/agent-secure" doctor --root "${{ inputs.root }}" --policy "${RUNNER_TEMP}/policy.json" > "${RUNNER_TEMP}/doctor.json"
+
+      - name: Run the scan
+        run: |
+          set -uo pipefail
+          rc=0
+          "${RUNNER_TEMP}/bin/agent-secure" scan --root "${{ inputs.root }}" --policy "${RUNNER_TEMP}/policy.json" > report.json || rc=$?
+          if [ "${rc}" -eq 2 ]; then
+            echo "::error::agent-secure could not complete the scan (status incomplete)"
+            exit 1
+          fi
+
+      - name: Evaluate verdict
+        run: |
+          set -euo pipefail
+          STATUS="$(python3 -c 'import json; print(json.load(open("report.json")).get("status", "incomplete"))')"
+          echo "agent-secure verdict: ${STATUS}"
+          if [ "${STATUS}" != "pass" ]; then
+            python3 -c 'import json; d=json.load(open("report.json")); [print("::error::" + str(f.get("scanner", "")) + " " + str(f.get("id", "")) + " " + str(f.get("file", "")) + ":" + str(f.get("line", ""))) for f in d.get("findings", [])]'
+            exit 1
+          fi
