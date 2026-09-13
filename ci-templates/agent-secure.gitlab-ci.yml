@@ -40,6 +40,16 @@
     - tar -xzf gitleaks.tar.gz gitleaks && rm gitleaks.tar.gz
     - "curl -fsSL --retry 3 -o osv-scanner https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
     - chmod +x gitleaks osv-scanner /tmp/as/bin/agent-secure
+    - |
+      printf '%s' "${ALLOW_JSON}" | jq -e '
+        type == "array" and all(.[]; (
+          (.scanner == "gitleaks" or .scanner == "osv-scanner") and
+          (.id | type == "string" and length > 0) and
+          (.reason | type == "string" and test("\\S")) and
+          (.expires | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
+          ((.file // "") | type == "string" and (startswith("/") | not) and (contains("../") | not) and . != "..")
+        ))
+      ' > /dev/null
     # Pin the scanners by digest, computed from the downloaded bytes.
     - |
       jq -n \

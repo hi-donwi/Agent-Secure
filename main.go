@@ -13,6 +13,8 @@ import (
 	"strings"
 )
 
+var version = "0.1.3-dev"
+
 // snapshot exports only this repository's Git-visible working files. Nested
 // repositories, ignored notes, scanner configuration and symlinks are not followed.
 func snapshot(root string) (string, func(), error) {
@@ -94,7 +96,7 @@ func snapshot(root string) (string, func(), error) {
 
 func execute(args []string, out, stderr io.Writer) int {
 	if len(args) == 1 && args[0] == "version" {
-		fmt.Fprintln(out, "agent-secure 0.1.0")
+		fmt.Fprintln(out, "agent-secure "+version)
 		return 0
 	}
 	if len(args) == 0 || (args[0] != "scan" && args[0] != "doctor") {

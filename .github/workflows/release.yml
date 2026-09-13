@@ -60,7 +60,7 @@ jobs:
             GOARCH="${target#*/}"
             echo "Building ${GOOS}/${GOARCH}..."
             GOOS="$GOOS" GOARCH="$GOARCH" CGO_ENABLED=0 \
-              go build -trimpath -ldflags="-s -w" \
+              go build -trimpath -ldflags="-s -w -X main.version=${TAG_NAME#v}" \
               -o "dist/agent-secure-${GOOS}-${GOARCH}" .
           done
 

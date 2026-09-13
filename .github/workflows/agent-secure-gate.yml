@@ -104,7 +104,15 @@ jobs:
           # the same guarantee the engine itself enforces before every run.
           # Allow entries come from the caller input (reviewable in the
           # workflow); the engine rejects entries lacking a reason/expiry.
-          printf '%s' "${ALLOW_JSON}" | jq -e 'type == "array"' > /dev/null
+          printf '%s' "${ALLOW_JSON}" | jq -e '
+            type == "array" and all(.[]; (
+              (.scanner == "gitleaks" or .scanner == "osv-scanner") and
+              (.id | type == "string" and length > 0) and
+              (.reason | type == "string" and test("\\S")) and
+              (.expires | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
+              ((.file // "") | type == "string" and (startswith("/") | not) and (contains("../") | not) and . != "..")
+            ))
+          ' > /dev/null
           jq -n \
             --arg gp "${RUNNER_TEMP}/tools/gitleaks" \
             --arg gd "$(sha256sum gitleaks | cut -d' ' -f1)" \
