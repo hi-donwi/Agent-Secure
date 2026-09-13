@@ -110,6 +110,15 @@ func (b *boundedBuffer) Write(data []byte) (int, error) {
 	return b.Buffer.Write(data)
 }
 
+func tailOf(b []byte, n int) string {
+	if len(b) > n {
+		return string(b[len(b)-n:])
+	}
+	return string(b)
+}
+
+func itoa(i int) string { return fmt.Sprintf("%d", i) }
+
 func runScanner(ctx context.Context, root, name string, tool Tool, network bool) ([]Finding, error) {
 	temp, err := os.MkdirTemp("", "agent-secure-report-")
 	if err != nil {
@@ -131,10 +140,14 @@ func runScanner(ctx context.Context, root, name string, tool Tool, network bool)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, tool.Path, args...)
 	cmd.Dir = temp // Do not load arbitrary project-local scanner configuration.
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "LANG=C", "TMPDIR=" + temp}
+	// Keep HOME: the offline OSV databases are cached under it. Everything else
+	// (credentials, shell config, project env) is dropped.
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "LANG=C", "TMPDIR=" + temp, "HOME=" + os.Getenv("HOME")}
 	var output boundedBuffer
-	cmd.Stdout = &output
-	cmd.Stderr = io.Discard
+	var logs boundedBuffer
+	cmd.Stdout = &output // osv-scanner writes the JSON report to stdout
+	// stderr holds scanner logs; never echoed, but exit-code triage reads its tail.
+	cmd.Stderr = &logs
 	err = cmd.Run()
 	exitCode := 0
 	if err != nil {
@@ -143,6 +156,12 @@ func runScanner(ctx context.Context, root, name string, tool Tool, network bool)
 			return nil, errors.New("scanner could not complete")
 		}
 		exitCode = exited.ExitCode()
+		if os.Getenv("AS_DEBUG") != "" {
+			os.Stderr.WriteString("TRIAGE exit=" + itoa(exitCode) + " tail=" + tailOf(logs.Bytes(), 200) + "\n")
+		}
+		if exitCode == 128 && name == "osv-scanner" && bytes.Contains(logs.Bytes(), []byte("No package sources found")) {
+			return nil, nil // no manifest in the snapshot: nothing to check
+		}
 		if exitCode != 1 || ctx.Err() != nil {
 			return nil, errors.New("scanner failed or timed out")
 		}
