@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -99,13 +100,23 @@ func validatePolicy(p Policy) error {
 		seen[name] = true
 	}
 	for _, a := range p.Allow {
-		if a.Reason == "" {
+		if a.Scanner != "gitleaks" && a.Scanner != "osv-scanner" {
+			return errors.New("allow entry has unknown scanner")
+		}
+		if a.ID == "" {
+			return errors.New("allow entry requires an id")
+		}
+		if strings.TrimSpace(a.Reason) == "" {
 			return errors.New("allow entry requires a reason")
 		}
-		if a.Expires != "" {
-			if _, e := time.Parse("2006-01-02", a.Expires); e != nil {
-				return fmt.Errorf("allow expiry %q must be YYYY-MM-DD", a.Expires)
-			}
+		if a.Expires == "" {
+			return errors.New("allow entry requires an expiry")
+		}
+		if _, e := time.Parse("2006-01-02", a.Expires); e != nil {
+			return fmt.Errorf("allow expiry %q must be YYYY-MM-DD", a.Expires)
+		}
+		if a.File != "" && !filepath.IsLocal(a.File) {
+			return errors.New("allow entry file must be a local relative path")
 		}
 	}
 	return nil
@@ -129,16 +140,17 @@ func filterAllowed(findings []Finding, p Policy) (kept []Finding, allowed []Allo
 			if a.File != "" && a.File != f.File {
 				continue
 			}
-			if a.Reason == "" {
+			if strings.TrimSpace(a.Reason) == "" {
 				return nil, nil, errors.New("allow entry requires a reason")
 			}
-			if a.Expires != "" {
-				if _, e := time.Parse("2006-01-02", a.Expires); e != nil {
-					return nil, nil, fmt.Errorf("invalid allow expiry %q: must be YYYY-MM-DD", a.Expires)
-				}
-				if todayInUTC() > a.Expires {
-					continue
-				}
+			if a.Expires == "" {
+				return nil, nil, errors.New("allow entry requires an expiry")
+			}
+			if _, e := time.Parse("2006-01-02", a.Expires); e != nil {
+				return nil, nil, fmt.Errorf("invalid allow expiry %q: must be YYYY-MM-DD", a.Expires)
+			}
+			if todayInUTC() > a.Expires {
+				continue
 			}
 			suppressed = true
 			allowed = append(allowed, AllowedFinding{Finding: f, Reason: a.Reason})
@@ -185,15 +197,6 @@ func (b *boundedBuffer) Write(data []byte) (int, error) {
 	return b.Buffer.Write(data)
 }
 
-func tailOf(b []byte, n int) string {
-	if len(b) > n {
-		return string(b[len(b)-n:])
-	}
-	return string(b)
-}
-
-func itoa(i int) string { return fmt.Sprintf("%d", i) }
-
 func runScanner(ctx context.Context, root, name string, tool Tool, network bool) ([]Finding, error) {
 	temp, err := os.MkdirTemp("", "agent-secure-report-")
 	if err != nil {
@@ -204,7 +207,7 @@ func runScanner(ctx context.Context, root, name string, tool Tool, network bool)
 	var args []string
 	switch name {
 	case "gitleaks":
-		args = []string{"dir", root, "--no-banner", "--redact=100", "--report-format", "json", "--report-path", reportFile}
+		args = []string{"dir", root, "--no-banner", "--redact=100", "--ignore-gitleaks-allow", "--report-format", "json", "--report-path", reportFile}
 	case "osv-scanner":
 		args = []string{"scan", "source", "--recursive", root, "--format=json", "--no-resolve"}
 		if !network {
@@ -231,9 +234,6 @@ func runScanner(ctx context.Context, root, name string, tool Tool, network bool)
 			return nil, errors.New("scanner could not complete")
 		}
 		exitCode = exited.ExitCode()
-		if os.Getenv("AS_DEBUG") != "" {
-			os.Stderr.WriteString("TRIAGE exit=" + itoa(exitCode) + " tail=" + tailOf(logs.Bytes(), 200) + "\n")
-		}
 		if exitCode == 128 && name == "osv-scanner" && bytes.Contains(logs.Bytes(), []byte("No package sources found")) {
 			return nil, nil // no manifest in the snapshot: nothing to check
 		}
@@ -268,6 +268,9 @@ func runScanner(ctx context.Context, root, name string, tool Tool, network bool)
 				if err != nil {
 					return nil, errors.New("invalid finding path")
 				}
+			}
+			if !filepath.IsLocal(file) {
+				return nil, errors.New("finding path escapes scan root")
 			}
 			findings = append(findings, Finding{ID: row.RuleID, Scanner: name, Severity: "high", File: file, Line: row.StartLine})
 		}

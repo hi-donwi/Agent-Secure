@@ -36,7 +36,9 @@ SHA-256; a mismatched digest aborts the scan as `incomplete`.
 
 `policies/example.json` is a starting template: copy it to a **private,
 access-controlled** location and treat it as operator-owned configuration.
-Unknown fields are rejected, so keep it exactly to the schema.
+Unknown fields are rejected, so keep it exactly to the schema. Allow entries,
+when present, must name `scanner`, `id`, `reason`, and `expires`
+(`YYYY-MM-DD`); `file` is optional and must stay inside the repository.
 
 Generate a policy with real paths and digests for the locally installed
 scanners instead of computing them by hand:
@@ -79,9 +81,10 @@ without network access.
 shasum -a 256 /path/to/gitleaks   # pin this digest in the policy
 ```
 
-`gitleaks dir <root> --no-banner --redact --report-format json` must exit `1`
-with a JSON array for findings; `osv-scanner scan source --format=json` must
-exit `1` with a results object. Any other non-zero exit is a tool failure.
+`gitleaks dir <root> --no-banner --redact --ignore-gitleaks-allow
+--report-format json` must exit `1` with a JSON array for findings;
+`osv-scanner scan source --format=json` must exit `1` with a results object.
+Any other non-zero exit is a tool failure.
 
 ## Gating CI (reusable workflow)
 
@@ -100,7 +103,7 @@ jobs:
       engine_sha256: 977bf6ea754b3a83619bdacc29164ad84b674d7ab9c41fc4d61e3fe6ed206071  # linux/amd64
       gitleaks_version: 8.30.1
       osv_scanner_version: 2.5.1
-      allow_json: '[]'  # operator-scoped allow entries; reasons are mandatory
+      allow_json: '[]'  # operator-scoped allow entries; reason and expiry are mandatory
 ```
 
 Pin the workflow by commit SHA — a mutable `@main` would let the gate itself
