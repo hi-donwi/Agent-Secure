@@ -12,7 +12,17 @@ on:
 permissions:
   contents: read
 
+# Dogfood: the engine gates itself with the released engine binary and
+# digest-verified scanners, exactly as consumer repos do.
 jobs:
+  security:
+    uses: hi-donwi/Agent-Secure/.github/workflows/agent-secure-gate.yml@dc9c533d6caade6b3e2f309cef473252c2daab3b
+    with:
+      root: .
+      engine_version: v0.1.1
+      gitleaks_version: 8.30.1
+      osv_scanner_version: 2.5.1
+
   test:
     runs-on: ubuntu-latest
     steps:
