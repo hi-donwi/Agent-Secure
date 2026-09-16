@@ -67,8 +67,11 @@ func snapshot(root string) (string, func(), error) {
 			cleanup()
 			return "", nil, errors.New("non-regular scan input")
 		}
+		if info.Size() > 20*1024*1024 {
+			continue // omit oversized blobs (demo video, dumps); scan the rest
+		}
 		total += info.Size()
-		if info.Size() > 20*1024*1024 || total > 500*1024*1024 {
+		if total > 500*1024*1024 {
 			cleanup()
 			return "", nil, errors.New("scan input exceeds size limit")
 		}
