@@ -6,7 +6,7 @@ name: ci
 
 on:
   push:
-    branches: [main, feat/security-baseline]
+    branches: [main]
   pull_request:
 
 permissions:
@@ -16,13 +16,15 @@ permissions:
 # digest-verified scanners, exactly as consumer repos do.
 jobs:
   security:
-    uses: hi-donwi/Agent-Secure/.github/workflows/agent-secure-gate.yml@47dd73ad270d88b79043f900e0cdf4915de94b0e
+    uses: hi-donwi/Agent-Secure/.github/workflows/agent-secure-gate.yml@df5f2268e6320b7354b87de66f7fe3a3ad2c913b
     with:
       root: .
       engine_version: v0.1.3
       engine_sha256: f19b92d17d8c92f0ef8f60a102ead1fe306df23b60cccf42b456a01ecde8202a
       gitleaks_version: 8.30.1
+      gitleaks_sha256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
       osv_scanner_version: 2.5.1
+      osv_scanner_sha256: f9f25499a2c8cc367b3af45df2ea7eeca7fbccceab9c35079968f4b3652194be
 
   test:
     runs-on: ubuntu-latest
@@ -33,11 +35,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Format
+        run: test -z "$(gofmt -l .)"
+
       - name: Vet
         run: go vet ./...
 
       - name: Test
-        run: go test ./...
+        run: go test -race -count=1 ./...
 
       - name: Build
         run: go build ./...
