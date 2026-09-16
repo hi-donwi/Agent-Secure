@@ -180,18 +180,23 @@ func offlineOSVDatabaseDir() string {
 }
 
 func hasOfflineOSVDatabase() bool {
-	root := filepath.Join(offlineOSVDatabaseDir(), "osv-scanner")
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return false
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	// Docs place zips under osv-scanner/; osv-scanner 2.5 writes osv-scalibr/.
+	// Source: https://google.github.io/osv-scanner/usage/offline-mode/#specify-database-location
+	base := offlineOSVDatabaseDir()
+	for _, vendor := range []string{"osv-scanner", "osv-scalibr"} {
+		root := filepath.Join(base, vendor)
+		entries, err := os.ReadDir(root)
+		if err != nil {
 			continue
 		}
-		info, err := os.Stat(filepath.Join(root, entry.Name(), "all.zip"))
-		if err == nil && info.Mode().IsRegular() && info.Size() > 0 {
-			return true
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			info, err := os.Stat(filepath.Join(root, entry.Name(), "all.zip"))
+			if err == nil && info.Mode().IsRegular() && info.Size() > 0 {
+				return true
+			}
 		}
 	}
 	return false
