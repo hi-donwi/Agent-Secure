@@ -19,8 +19,8 @@ jobs:
     uses: hi-donwi/Agent-Secure/.github/workflows/agent-secure-gate.yml@0982c6f5818e06f425fe014a685eeceace432330
     with:
       root: .
-      engine_version: v0.1.4
-      engine_sha256: 13e1935984bcda71f67edafc663a03fb1ed05835fbffaa770eb1563cbe07fc7b
+      engine_version: v0.1.5
+      engine_sha256: 491c0f4b9b4fe379b13f85be0a8956343a6731694e714763d33b3827e65649c9
       gitleaks_version: 8.30.1
       gitleaks_sha256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
       osv_scanner_version: 2.5.1
