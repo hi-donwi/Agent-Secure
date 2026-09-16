@@ -22,9 +22,9 @@
   image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
   stage: test
   variables:
-    ENGINE_VERSION: "v0.1.4"
+    ENGINE_VERSION: "v0.1.5"
     # SHA-256 of agent-secure-linux-amd64 from that release's checksums.txt
-    ENGINE_SHA256: "13e1935984bcda71f67edafc663a03fb1ed05835fbffaa770eb1563cbe07fc7b"
+    ENGINE_SHA256: "491c0f4b9b4fe379b13f85be0a8956343a6731694e714763d33b3827e65649c9"
     GITLEAKS_VERSION: "8.30.1"
     # SHA-256 of gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz from
     # https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_checksums.txt
