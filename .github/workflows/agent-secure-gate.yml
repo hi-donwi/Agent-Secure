@@ -10,14 +10,16 @@
 #         engine_version: v1.0.0
 #         engine_sha256: <sha256 of agent-secure-linux-amd64 from that release>
 #         gitleaks_version: 8.30.1
+#         gitleaks_sha256: <sha256 of gitleaks_${version}_linux_x64.tar.gz>
 #         osv_scanner_version: 2.5.1
+#         osv_scanner_sha256: <sha256 of osv-scanner_linux_amd64>
 #
-# Everything is pinned: the engine code by @sha, the engine binary by the
-# release checksum (engine_sha256, or the release checksums.txt when omitted),
-# and both scanners by version + digest at runtime. The policy is generated
-# inside the job from those digests and lives only for the job's lifetime —
-# there is no policy checkout that could be tampered with, and no scanner
-# configuration comes from the scanned repository.
+# Everything is pinned: the engine code by @sha, the engine binary by
+# engine_sha256, and both scanner downloads by the checksums published with
+# those scanner releases. Hashing whatever just arrived is not a pin. The
+# policy is generated inside the job from the verified bytes and lives only
+# for the job's lifetime — there is no policy checkout that could be tampered
+# with, and no scanner configuration comes from the scanned repository.
 #
 # allow_json lets the CALLER act as policy operator for their own repo: pass
 # the same allow entries a strict operator would put in an external policy
@@ -41,9 +43,8 @@ on:
         required: true
         type: string
       engine_sha256:
-        description: 'SHA-256 of agent-secure-linux-amd64; when empty, verified against the release checksums.txt'
-        required: false
-        default: ''
+        description: 'SHA-256 of agent-secure-linux-amd64 from the engine release checksums.txt'
+        required: true
         type: string
       allow_json:
         description: 'JSON array of allow entries (scanner, id, file, reason, expires)'
@@ -53,7 +54,15 @@ on:
       gitleaks_version:
         required: true
         type: string
+      gitleaks_sha256:
+        description: 'SHA-256 of gitleaks_${version}_linux_x64.tar.gz from the gitleaks release checksums'
+        required: true
+        type: string
       osv_scanner_version:
+        required: true
+        type: string
+      osv_scanner_sha256:
+        description: 'SHA-256 of osv-scanner_linux_amd64 from the osv-scanner release SHA256SUMS'
         required: true
         type: string
 
@@ -71,7 +80,9 @@ jobs:
           ENGINE_VERSION: ${{ inputs.engine_version }}
           ENGINE_SHA256: ${{ inputs.engine_sha256 }}
           GITLEAKS_VERSION: ${{ inputs.gitleaks_version }}
+          GITLEAKS_SHA256: ${{ inputs.gitleaks_sha256 }}
           OSV_SCANNER_VERSION: ${{ inputs.osv_scanner_version }}
+          OSV_SCANNER_SHA256: ${{ inputs.osv_scanner_sha256 }}
           ALLOW_JSON: ${{ inputs.allow_json }}
         run: |
           set -euo pipefail
@@ -80,30 +91,23 @@ jobs:
 
           curl -fsSL --retry 3 -o "${RUNNER_TEMP}/bin/agent-secure" \
             "https://github.com/hi-donwi/Agent-Secure/releases/download/${ENGINE_VERSION}/agent-secure-linux-amd64"
-
-          if [ -n "${ENGINE_SHA256}" ]; then
-            echo "${ENGINE_SHA256}  ${RUNNER_TEMP}/bin/agent-secure" | sha256sum -c -
-          else
-            # Fall back to the release's own checksum manifest, fetched over TLS.
-            curl -fsSL --retry 3 -o checksums.txt \
-              "https://github.com/hi-donwi/Agent-Secure/releases/download/${ENGINE_VERSION}/checksums.txt"
-            grep "agent-secure-linux-amd64" checksums.txt | sha256sum -c -
-          fi
+          echo "${ENGINE_SHA256}  ${RUNNER_TEMP}/bin/agent-secure" | sha256sum -c -
 
           curl -fsSL --retry 3 -o gitleaks.tar.gz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
           tar -xzf gitleaks.tar.gz gitleaks
           rm gitleaks.tar.gz
 
           curl -fsSL --retry 3 -o osv-scanner \
             "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SCANNER_SHA256}  osv-scanner" | sha256sum -c -
 
           chmod +x gitleaks osv-scanner "${RUNNER_TEMP}/bin/agent-secure"
 
-          # Pin the scanners by digest, computed from the downloaded bytes —
-          # the same guarantee the engine itself enforces before every run.
-          # Allow entries come from the caller input (reviewable in the
-          # workflow); the engine rejects entries lacking a reason/expiry.
+          # Policy pins the verified scanner binaries. Allow entries come from
+          # the caller input (reviewable in the workflow); the engine rejects
+          # entries lacking a reason/expiry.
           printf '%s' "${ALLOW_JSON}" | jq -e '
             type == "array" and all(.[]; (
               (.scanner == "gitleaks" or .scanner == "osv-scanner") and
