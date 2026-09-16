@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-var version = "0.1.3-dev"
+var version = "0.1.4-dev"
 
 // snapshot exports only this repository's Git-visible working files. Nested
 // repositories, ignored notes, scanner configuration and symlinks are not followed.

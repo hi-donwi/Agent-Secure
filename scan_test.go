@@ -30,7 +30,7 @@ func TestVersionReportsCurrentRelease(t *testing.T) {
 	if code := execute([]string{"version"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("version failed: code=%d stderr=%q", code, stderr.String())
 	}
-	if strings.TrimSpace(stdout.String()) != "agent-secure 0.1.3-dev" {
+	if strings.TrimSpace(stdout.String()) != "agent-secure 0.1.4-dev" {
 		t.Fatalf("stale version output: %q", stdout.String())
 	}
 }
