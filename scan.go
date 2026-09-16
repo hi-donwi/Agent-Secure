@@ -163,6 +163,47 @@ func filterAllowed(findings []Finding, p Policy) (kept []Finding, allowed []Allo
 	return kept, allowed, nil
 }
 
+const offlineOSVMissing = "offline OSV database missing"
+
+// offlineOSVDatabaseDir follows OSV-Scanner's documented lookup:
+// OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY, then os.UserCacheDir, then os.TempDir.
+// Databases live at {dir}/osv-scanner/{ecosystem}/all.zip.
+// Source: https://google.github.io/osv-scanner/usage/offline-mode/#specify-database-location
+func offlineOSVDatabaseDir() string {
+	if dir := os.Getenv("OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY"); dir != "" {
+		return dir
+	}
+	if dir, err := os.UserCacheDir(); err == nil && dir != "" {
+		return dir
+	}
+	return os.TempDir()
+}
+
+func hasOfflineOSVDatabase() bool {
+	root := filepath.Join(offlineOSVDatabaseDir(), "osv-scanner")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(root, entry.Name(), "all.zip"))
+		if err == nil && info.Mode().IsRegular() && info.Size() > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func verifyOfflineOSV(network bool) error {
+	if network || hasOfflineOSVDatabase() {
+		return nil
+	}
+	return errors.New(offlineOSVMissing)
+}
+
 func verifyTool(tool Tool) error {
 	if !filepath.IsAbs(tool.Path) || !digestPattern.MatchString(tool.SHA256) {
 		return errors.New("scanner needs an absolute path and pinned SHA-256")
@@ -219,8 +260,12 @@ func runScanner(ctx context.Context, root, name string, tool Tool, network bool)
 	cmd := exec.CommandContext(ctx, tool.Path, args...)
 	cmd.Dir = temp // Do not load arbitrary project-local scanner configuration.
 	// Keep HOME: the offline OSV databases are cached under it. Everything else
-	// (credentials, shell config, project env) is dropped.
+	// (credentials, shell config, project env) is dropped. Operators may also
+	// point OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY at a private cache.
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "LANG=C", "TMPDIR=" + temp, "HOME=" + os.Getenv("HOME")}
+	if dir := os.Getenv("OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY"); dir != "" {
+		cmd.Env = append(cmd.Env, "OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY="+dir)
+	}
 	var output boundedBuffer
 	var logs boundedBuffer
 	cmd.Stdout = &output // osv-scanner writes the JSON report to stdout
@@ -236,6 +281,9 @@ func runScanner(ctx context.Context, root, name string, tool Tool, network bool)
 		exitCode = exited.ExitCode()
 		if exitCode == 128 && name == "osv-scanner" && bytes.Contains(logs.Bytes(), []byte("No package sources found")) {
 			return nil, nil // no manifest in the snapshot: nothing to check
+		}
+		if name == "osv-scanner" && bytes.Contains(bytes.ToLower(logs.Bytes()), []byte("no offline version of the osv database")) {
+			return nil, errors.New(offlineOSVMissing)
 		}
 		if exitCode != 1 || ctx.Err() != nil {
 			return nil, errors.New("scanner failed or timed out")

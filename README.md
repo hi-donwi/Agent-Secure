@@ -41,7 +41,9 @@ when present, must name `scanner`, `id`, `reason`, and `expires`
 (`YYYY-MM-DD`); `file` is optional and must stay inside the repository.
 
 Generate a policy with real paths and digests for the locally installed
-scanners instead of computing them by hand:
+scanners instead of computing them by hand. Homebrew and similar managers
+expose scanners as shims; the script resolves those to a regular file
+because the engine refuses symlink tool paths:
 
 ```sh
 scripts/bootstrap-policy.sh > /secure/location/policy.json   # operator-owned
@@ -50,6 +52,11 @@ agent-secure doctor --root <repo> --policy /secure/location/policy.json
 
 Regenerate after every scanner upgrade — a stale digest is reported by
 `doctor` as an error, never silently ignored.
+
+When `allow_network` is false, `doctor` also fails unless an OSV offline
+database is already present at `{cache}/osv-scanner/{ecosystem}/all.zip`
+(`OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY`, otherwise the user cache directory).
+See [OSV-Scanner offline mode](https://google.github.io/osv-scanner/usage/offline-mode/).
 
 `allow_network: false` runs OSV-Scanner with `--offline-vulnerabilities` from
 a pre-fetched local database. Seed the cache once per machine/runner (the
@@ -90,8 +97,9 @@ Any other non-zero exit is a tool failure.
 
 `.github/workflows/agent-secure-gate.yml` is a `workflow_call` template that
 product repos call after tagging a release. It downloads the engine binary and
-both scanners, digest-verifies everything, generates the policy at runtime
-(living only for the job), and fails the job on any verdict other than `pass`:
+both scanners, digest-verifies each download against caller-pinned checksums
+from those projects' own releases, generates the policy at runtime (living
+only for the job), and fails the job on any verdict other than `pass`:
 
 ```yaml
 jobs:
@@ -102,14 +110,18 @@ jobs:
       engine_version: v0.1.3
       engine_sha256: f19b92d17d8c92f0ef8f60a102ead1fe306df23b60cccf42b456a01ecde8202a  # linux/amd64
       gitleaks_version: 8.30.1
+      gitleaks_sha256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  # linux_x64.tar.gz
       osv_scanner_version: 2.5.1
+      osv_scanner_sha256: f9f25499a2c8cc367b3af45df2ea7eeca7fbccceab9c35079968f4b3652194be  # linux_amd64
       allow_json: '[]'  # operator-scoped allow entries; reason and expiry are mandatory
 ```
 
 Pin the workflow by commit SHA — a mutable `@main` would let the gate itself
-be modified after review. `allow_network` is `true` inside the ephemeral
-runner (OSV advisory lookup only); keep local runs offline per the policy
-default.
+be modified after review. Take scanner checksums from the scanner releases
+(`gitleaks_*_checksums.txt`, `osv-scanner_SHA256SUMS`), not from a hash of
+whatever the job just downloaded. `allow_network` is `true` inside the
+ephemeral runner (OSV advisory lookup only); keep local runs offline per the
+policy default.
 
 ## Development
 
@@ -119,3 +131,7 @@ go vet ./...
 ```
 
 Tests use synthetic scanner fixtures only — no network, no real credentials.
+
+## License
+
+[MIT](LICENSE)

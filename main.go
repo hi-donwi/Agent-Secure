@@ -18,6 +18,11 @@ var version = "0.1.3-dev"
 // snapshot exports only this repository's Git-visible working files. Nested
 // repositories, ignored notes, scanner configuration and symlinks are not followed.
 func snapshot(root string) (string, func(), error) {
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", nil, errors.New("invalid root")
+	}
+	root = canonical
 	cmd := exec.Command("git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 	listing, err := cmd.Output()
 	if err != nil {
@@ -132,6 +137,11 @@ func execute(args []string, out, stderr io.Writer) int {
 			if err := verifyTool(p.Tools[name]); err != nil {
 				check.Status = "error"
 				check.Detail = err.Error()
+			} else if name == "osv-scanner" {
+				if err := verifyOfflineOSV(p.AllowNetwork); err != nil {
+					check.Status = "error"
+					check.Detail = err.Error()
+				}
 			}
 			report.Checks = append(report.Checks, check)
 		}
