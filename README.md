@@ -54,8 +54,9 @@ Regenerate after every scanner upgrade — a stale digest is reported by
 `doctor` as an error, never silently ignored.
 
 When `allow_network` is false, `doctor` also fails unless an OSV offline
-database is already present at `{cache}/osv-scanner/{ecosystem}/all.zip`
-(`OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY`, otherwise the user cache directory).
+database zip is already present under `{cache}/osv-scanner/` (documented
+layout) or `{cache}/osv-scalibr/` (osv-scanner 2.5). Cache root is
+`OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY`, otherwise the user cache directory.
 See [OSV-Scanner offline mode](https://google.github.io/osv-scanner/usage/offline-mode/).
 
 `allow_network: false` runs OSV-Scanner with `--offline-vulnerabilities` from
