@@ -12,6 +12,19 @@
 # to remote lookups is an explicit policy edit, not a default.
 set -euo pipefail
 
+# Homebrew and other managers expose scanners as shims. The engine refuses
+# symlink tool paths (TOCTOU), so pin the regular file the shim resolves to.
+canonicalize() {
+  python3 -c '
+import os, sys
+path = os.path.realpath(sys.argv[1])
+if not os.path.isfile(path) or os.path.islink(path):
+    sys.stderr.write("error: scanner path must resolve to a regular file\n")
+    sys.exit(1)
+print(path)
+' "$1"
+}
+
 resolve() {
   local name="$1" given="${2:-}"
   if [ -n "$given" ]; then
@@ -19,7 +32,7 @@ resolve() {
       echo "error: $given is not executable" >&2
       exit 1
     fi
-    printf '%s\n' "$given"
+    canonicalize "$given"
     return
   fi
   local found
@@ -37,7 +50,7 @@ resolve() {
     echo "error: $name not found; pass its path as an argument" >&2
     exit 1
   fi
-  printf '%s\n' "$found"
+  canonicalize "$found"
 }
 
 digest() {

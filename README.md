@@ -41,7 +41,9 @@ when present, must name `scanner`, `id`, `reason`, and `expires`
 (`YYYY-MM-DD`); `file` is optional and must stay inside the repository.
 
 Generate a policy with real paths and digests for the locally installed
-scanners instead of computing them by hand:
+scanners instead of computing them by hand. Homebrew and similar managers
+expose scanners as shims; the script resolves those to a regular file
+because the engine refuses symlink tool paths:
 
 ```sh
 scripts/bootstrap-policy.sh > /secure/location/policy.json   # operator-owned
@@ -50,6 +52,11 @@ agent-secure doctor --root <repo> --policy /secure/location/policy.json
 
 Regenerate after every scanner upgrade — a stale digest is reported by
 `doctor` as an error, never silently ignored.
+
+When `allow_network` is false, `doctor` also fails unless an OSV offline
+database is already present at `{cache}/osv-scanner/{ecosystem}/all.zip`
+(`OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY`, otherwise the user cache directory).
+See [OSV-Scanner offline mode](https://google.github.io/osv-scanner/usage/offline-mode/).
 
 `allow_network: false` runs OSV-Scanner with `--offline-vulnerabilities` from
 a pre-fetched local database. Seed the cache once per machine/runner (the
@@ -119,3 +126,7 @@ go vet ./...
 ```
 
 Tests use synthetic scanner fixtures only — no network, no real credentials.
+
+## License
+
+[MIT](LICENSE)

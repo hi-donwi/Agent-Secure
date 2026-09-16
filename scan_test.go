@@ -239,3 +239,247 @@ printf '%s' '[]' > "$1"
 		t.Fatalf("gitleaks was not run with --ignore-gitleaks-allow: %+v", r)
 	}
 }
+
+func TestScannerSymlinkIsRejected(t *testing.T) {
+	real := scannerFixture(t, "exit 0\n")
+	link := filepath.Join(t.TempDir(), "gitleaks")
+	if err := os.Symlink(real.Path, link); err != nil {
+		t.Fatal(err)
+	}
+	tool := Tool{Path: link, SHA256: real.SHA256}
+	r := scan(context.Background(), t.TempDir(), Policy{Version: 1, Scanners: []string{"gitleaks"}, Tools: map[string]Tool{"gitleaks": tool}}, "fixture")
+	if r.ExitCode() != 2 {
+		t.Fatalf("symlink scanner accepted: %+v", r)
+	}
+	if r.Checks[0].Detail != "scanner is missing, non-executable or a symlink" {
+		t.Fatalf("unexpected detail: %+v", r.Checks[0])
+	}
+}
+
+func TestBootstrapPolicyResolvesSymlinkToRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	gitleaks := scannerFixture(t, "exit 0\n")
+	osv := scannerFixture(t, "exit 0\n")
+	linkG := filepath.Join(dir, "gitleaks")
+	linkO := filepath.Join(dir, "osv-scanner")
+	if err := os.Symlink(gitleaks.Path, linkG); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(osv.Path, linkO); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("scripts/bootstrap-policy.sh", linkG, linkO).Output()
+	if err != nil {
+		t.Fatalf("bootstrap failed: %v\n%s", err, out)
+	}
+	var policy Policy
+	if err := json.Unmarshal(out, &policy); err != nil {
+		t.Fatalf("invalid policy JSON: %v\n%s", err, out)
+	}
+	wantG, err := filepath.EvalSymlinks(gitleaks.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantO, err := filepath.EvalSymlinks(osv.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.Tools["gitleaks"].Path != wantG {
+		t.Fatalf("gitleaks path not canonical: %q want %q", policy.Tools["gitleaks"].Path, wantG)
+	}
+	if policy.Tools["osv-scanner"].Path != wantO {
+		t.Fatalf("osv-scanner path not canonical: %q want %q", policy.Tools["osv-scanner"].Path, wantO)
+	}
+	if policy.Tools["gitleaks"].Path == linkG || policy.Tools["osv-scanner"].Path == linkO {
+		t.Fatal("bootstrap left a symlink path in the policy")
+	}
+	if err := verifyTool(policy.Tools["gitleaks"]); err != nil {
+		t.Fatalf("bootstrapped gitleaks rejected: %v", err)
+	}
+	if err := verifyTool(policy.Tools["osv-scanner"]); err != nil {
+		t.Fatalf("bootstrapped osv-scanner rejected: %v", err)
+	}
+}
+
+func gitRepo(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := exec.Command("git", "-C", root, "init", "-qb", "main").Run(); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func gitAdd(t *testing.T, root string, names ...string) {
+	t.Helper()
+	args := append([]string{"-C", root, "add", "--"}, names...)
+	if err := exec.Command("git", args...).Run(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSnapshotCopiesGitVisibleFile(t *testing.T) {
+	root := gitRepo(t)
+	if err := os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("ok"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	gitAdd(t, root, "tracked.txt")
+	target, cleanup, err := snapshot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	got, err := os.ReadFile(filepath.Join(target, "tracked.txt"))
+	if err != nil || string(got) != "ok" {
+		t.Fatalf("tracked file missing from snapshot: %s %v", got, err)
+	}
+}
+
+func TestSnapshotRejectsSymlink(t *testing.T) {
+	root := gitRepo(t)
+	if err := os.WriteFile(filepath.Join(root, "real.txt"), []byte("ok"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real.txt", filepath.Join(root, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	gitAdd(t, root, "real.txt", "link.txt")
+	if _, _, err := snapshot(root); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("symlink scan input accepted: %v", err)
+	}
+}
+
+func TestSnapshotSkipsRepositoryScannerConfig(t *testing.T) {
+	root := gitRepo(t)
+	for _, name := range []string{".gitleaks.toml", ".gitleaksignore", "osv-scanner.toml", "keep.txt"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitAdd(t, root, ".gitleaks.toml", ".gitleaksignore", "osv-scanner.toml", "keep.txt")
+	target, cleanup, err := snapshot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	for _, name := range []string{".gitleaks.toml", ".gitleaksignore", "osv-scanner.toml"} {
+		if _, err := os.Stat(filepath.Join(target, name)); !os.IsNotExist(err) {
+			t.Fatalf("scanner config %s leaked into snapshot", name)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(target, "keep.txt")); err != nil {
+		t.Fatal("expected file missing from snapshot")
+	}
+}
+
+func TestSnapshotSkipsGitignoredFile(t *testing.T) {
+	root := gitRepo(t)
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("ignored.txt\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ignored.txt"), []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "visible.txt"), []byte("ok"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	gitAdd(t, root, ".gitignore", "visible.txt")
+	target, cleanup, err := snapshot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if _, err := os.Stat(filepath.Join(target, "ignored.txt")); !os.IsNotExist(err) {
+		t.Fatal("gitignored file leaked into snapshot")
+	}
+}
+
+func TestSnapshotRejectsOversizedFile(t *testing.T) {
+	root := gitRepo(t)
+	path := filepath.Join(root, "big.bin")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(20*1024*1024 + 1); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	f.Close()
+	gitAdd(t, root, "big.bin")
+	if _, _, err := snapshot(root); err == nil || !strings.Contains(err.Error(), "size limit") {
+		t.Fatalf("oversized file accepted: %v", err)
+	}
+}
+
+func writePolicyFile(t *testing.T, p Policy) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "policy.json")
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func seedOfflineOSVDatabase(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "osv-scanner", "Go"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "osv-scanner", "Go", "all.zip"), []byte("pk"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestDoctorRejectsOfflineOSVWithoutDatabase(t *testing.T) {
+	t.Setenv("OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY", t.TempDir())
+	tool := scannerFixture(t, "exit 0\n")
+	policyPath := writePolicyFile(t, Policy{Version: 1, Scanners: []string{"osv-scanner"}, Tools: map[string]Tool{"osv-scanner": tool}})
+	var stdout, stderr bytes.Buffer
+	code := execute([]string{"doctor", "--root", gitRepo(t), "--policy", policyPath}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("missing offline DB accepted: code=%d stdout=%s", code, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "offline OSV database missing") {
+		t.Fatalf("opaque doctor error: %s", stdout.String())
+	}
+}
+
+func TestDoctorAcceptsOfflineOSVWhenDatabasePresent(t *testing.T) {
+	t.Setenv("OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY", seedOfflineOSVDatabase(t))
+	tool := scannerFixture(t, "exit 0\n")
+	policyPath := writePolicyFile(t, Policy{Version: 1, Scanners: []string{"osv-scanner"}, Tools: map[string]Tool{"osv-scanner": tool}})
+	var stdout, stderr bytes.Buffer
+	code := execute([]string{"doctor", "--root", gitRepo(t), "--policy", policyPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("seeded offline DB rejected: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestDoctorSkipsOfflineOSVCheckWhenNetworkAllowed(t *testing.T) {
+	t.Setenv("OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY", t.TempDir())
+	tool := scannerFixture(t, "exit 0\n")
+	policyPath := writePolicyFile(t, Policy{Version: 1, AllowNetwork: true, Scanners: []string{"osv-scanner"}, Tools: map[string]Tool{"osv-scanner": tool}})
+	var stdout, stderr bytes.Buffer
+	code := execute([]string{"doctor", "--root", gitRepo(t), "--policy", policyPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("network-allowed doctor failed: code=%d stdout=%s", code, stdout.String())
+	}
+}
+
+func TestOfflineOSVStderrIsExplicit(t *testing.T) {
+	tool := scannerFixture(t, "printf 'could not load db for Go ecosystem: unable to fetch OSV database: no offline version of the OSV database is available' >&2\nexit 127\n")
+	r := scan(context.Background(), t.TempDir(), Policy{Version: 1, Scanners: []string{"osv-scanner"}, Tools: map[string]Tool{"osv-scanner": tool}}, "fixture")
+	if r.ExitCode() != 2 {
+		t.Fatalf("expected incomplete: %+v", r)
+	}
+	if r.Checks[0].Detail != "offline OSV database missing" {
+		t.Fatalf("opaque scan error: %+v", r.Checks[0])
+	}
+}
