@@ -16,7 +16,7 @@ permissions:
 # digest-verified scanners, exactly as consumer repos do.
 jobs:
   security:
-    uses: hi-donwi/Agent-Secure/.github/workflows/agent-secure-gate.yml@df5f2268e6320b7354b87de66f7fe3a3ad2c913b
+    uses: hi-donwi/Agent-Secure/.github/workflows/agent-secure-gate.yml@0982c6f5818e06f425fe014a685eeceace432330
     with:
       root: .
       engine_version: v0.1.3
