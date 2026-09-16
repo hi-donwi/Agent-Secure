@@ -427,11 +427,16 @@ func writePolicyFile(t *testing.T, p Policy) string {
 
 func seedOfflineOSVDatabase(t *testing.T) string {
 	t.Helper()
+	return seedOfflineOSVDatabaseLayout(t, "osv-scanner")
+}
+
+func seedOfflineOSVDatabaseLayout(t *testing.T, vendor string) string {
+	t.Helper()
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "osv-scanner", "Go"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, vendor, "Go"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "osv-scanner", "Go", "all.zip"), []byte("pk"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, vendor, "Go", "all.zip"), []byte("pk"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -459,6 +464,17 @@ func TestDoctorAcceptsOfflineOSVWhenDatabasePresent(t *testing.T) {
 	code := execute([]string{"doctor", "--root", gitRepo(t), "--policy", policyPath}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("seeded offline DB rejected: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestDoctorAcceptsOfflineOSVScalibrLayout(t *testing.T) {
+	t.Setenv("OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY", seedOfflineOSVDatabaseLayout(t, "osv-scalibr"))
+	tool := scannerFixture(t, "exit 0\n")
+	policyPath := writePolicyFile(t, Policy{Version: 1, Scanners: []string{"osv-scanner"}, Tools: map[string]Tool{"osv-scanner": tool}})
+	var stdout, stderr bytes.Buffer
+	code := execute([]string{"doctor", "--root", gitRepo(t), "--policy", policyPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("osv-scalibr layout rejected: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 }
 
