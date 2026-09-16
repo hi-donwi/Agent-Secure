@@ -79,7 +79,9 @@ without network access.
   gate.
 - Findings carry only `id`, `scanner`, `severity`, `file`, `line`. Secret
   values, match snippets, and scanner stderr are deliberately dropped.
-- Coverage is stated in the report: Git-visible working files only. Excluded
+- Coverage is stated in the report: Git-visible working files only. Files over
+  20 MiB are omitted (demo video, dumps) so a large blob cannot abort the gate.
+  Excluded
   files, Git history, the agent runtime sandbox, and live systems are not
   scanned.
 

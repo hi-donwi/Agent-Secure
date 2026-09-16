@@ -394,8 +394,11 @@ func TestSnapshotSkipsGitignoredFile(t *testing.T) {
 	}
 }
 
-func TestSnapshotRejectsOversizedFile(t *testing.T) {
+func TestSnapshotSkipsOversizedFile(t *testing.T) {
 	root := gitRepo(t)
+	if err := os.WriteFile(filepath.Join(root, "ok.txt"), []byte("ok"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(root, "big.bin")
 	f, err := os.Create(path)
 	if err != nil {
@@ -406,9 +409,18 @@ func TestSnapshotRejectsOversizedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.Close()
-	gitAdd(t, root, "big.bin")
-	if _, _, err := snapshot(root); err == nil || !strings.Contains(err.Error(), "size limit") {
-		t.Fatalf("oversized file accepted: %v", err)
+	gitAdd(t, root, "ok.txt", "big.bin")
+	target, cleanup, err := snapshot(root)
+	if err != nil {
+		t.Fatalf("snapshot failed on oversized sibling: %v", err)
+	}
+	defer cleanup()
+	if _, err := os.Stat(filepath.Join(target, "big.bin")); !os.IsNotExist(err) {
+		t.Fatal("oversized file was copied into the snapshot")
+	}
+	got, err := os.ReadFile(filepath.Join(target, "ok.txt"))
+	if err != nil || string(got) != "ok" {
+		t.Fatalf("small file missing from snapshot: %s %v", got, err)
 	}
 }
 
